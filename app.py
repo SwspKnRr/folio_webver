@@ -46,7 +46,7 @@ st.set_page_config(page_title="리밸런싱 백테스트 / 예측 웹앱", layou
 
 st.title("📈 오늘 살까요 팔까요")
 
-# # ---------- 티커 검색 도우미 (RapidAPI Yahoo Finance) ---------- #
+# ---------- 티커 검색 도우미 (RapidAPI Yahoo Finance auto-complete) ---------- #
 with st.expander("🔍 티커 검색 도우미 (Yahoo Finance via RapidAPI)", expanded=False):
     query = st.text_input(
         "회사 이름, ETF 이름, 티커 일부를 입력하세요 (예: apple, nasdaq, samsung, 005930)",
@@ -72,22 +72,25 @@ with st.expander("🔍 티커 검색 도우미 (Yahoo Finance via RapidAPI)", ex
                     "x-rapidapi-key": st.secrets["RAPIDAPI_KEY"],
                     "x-rapidapi-host": st.secrets["RAPIDAPI_HOST"],
                 }
+                # ✅ auto-complete 엔드포인트는 q + region 조합이 기본
                 params = {
                     "q": query,
-                    "quotesCount": int(num_results),
-                    "newsCount": 0,
+                    "region": "US",
                 }
 
                 resp = requests.get(url, headers=headers, params=params, timeout=5)
                 resp.raise_for_status()
                 data = resp.json()
 
-                quotes = data.get("quotes", [])
+                # 디버그용: 구조 확인하고 싶으면 주석 해제
+                # st.write("raw response:", data)
+
+                quotes = data.get("quotes") or []
                 if not quotes:
                     st.info("검색 결과가 없습니다. 영어 이름/심볼로 다시 시도해 보세요.")
                 else:
                     rows = []
-                    for q in quotes:
+                    for q in quotes[:num_results]:
                         rows.append(
                             {
                                 "티커": q.get("symbol"),
@@ -117,6 +120,7 @@ with st.expander("🔍 티커 검색 도우미 (Yahoo Finance via RapidAPI)", ex
         "해외 종목/ETF 위주로 잘 나오며, 국내 종목은 '005930.KS', '000660.KS'처럼 "
         "거래소 코드(KS/KQ 등)를 붙여야 할 수 있습니다."
     )
+
 
 
 
