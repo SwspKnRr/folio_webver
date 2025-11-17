@@ -1,11 +1,13 @@
 # app.py
+import os
 import datetime as dt
 
-import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.pyplot as plt
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+from matplotlib import font_manager as fm
 
 import matplotlib
 matplotlib.rcParams['font.family'] = 'Gulim'
@@ -24,8 +26,16 @@ from core import (
     analyze_premarket_vs_regular,  # 🔹 새로 추가
 )
 
-# ---------- 한글 폰트 설정 (Windows: Gulim) ---------- #
-matplotlib.rcParams["font.family"] = "Gulim"
+# ---------- 한글 폰트 설정 (Gulim, 프로젝트 내 폰트 사용) ---------- #
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "gulim.ttc")
+
+if os.path.exists(FONT_PATH):
+    fm.fontManager.addfont(FONT_PATH)
+    matplotlib.rcParams["font.family"] = "Gulim"  # gulim.ttc 안에 들어있는 패밀리명
+else:
+    # 폰트 파일을 못 찾으면 기본 폰트로 (한글은 깨질 수 있음)
+    matplotlib.rcParams["font.family"] = "DejaVu Sans"
+
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 
