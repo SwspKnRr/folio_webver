@@ -65,6 +65,18 @@ def init_state():
 
 init_state()
 
+def apply_main_best_params():
+    """최적 파라미터를 메인 입력값에 자동 반영하는 콜백"""
+    best = st.session_state.get("main_opt_best_params")
+    if not best:
+        return
+
+    # 메인 탭 number_input들이 쓰는 key들
+    st.session_state["main_down_pct"] = float(best["down"])
+    st.session_state["main_up_pct"] = float(best["up"])
+    st.session_state["main_buy_frac"] = float(best["buy_frac"])
+    st.session_state["main_sell_frac"] = float(best["sell_frac"])
+
 
 # ---------- 공통 함수: 오늘 요약 텍스트 생성 ---------- #
 def generate_today_summary(
@@ -576,11 +588,20 @@ with tab_main:
 
                     st.text("\n".join(lines))
 
-                    # 🔹 여기부터 추가: 최적 파라미터를 왼쪽 입력값에 자동 반영ㄴㄴㄴㄴㄴ
-                    st.session_state["main_down_pct"] = float(d_best)
-                    st.session_state["main_up_pct"] = float(u_best)
-                    st.session_state["main_buy_frac"] = float(bf_best)
-                    st.session_state["main_sell_frac"] = float(sf_best)
+                    # ✅ 1) 최적값을 session_state에 저장 (나중에 콜백에서 읽을 용도)
+                    st.session_state["main_opt_best_params"] = {
+                      "down": d_best,
+                      "up": u_best,
+                      "buy_frac": bf_best,
+                      "sell_frac": sf_best,
+                     }
+
+                    # ✅ 2) 이 값을 메인 입력값에 반영하는 버튼 (on_click 콜백 사용)
+                    st.button(
+                       "⬅ 이 파라미터를 메인 입력값에 자동 반영",
+                        key="btn_apply_opt_to_main",
+                        on_click=apply_main_best_params,
+                     )
 
 
 # =========================================================
