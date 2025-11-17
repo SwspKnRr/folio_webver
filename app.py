@@ -42,7 +42,7 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 # ---------- Streamlit 기본 설정 ---------- #
 st.set_page_config(page_title="특수 리밸 백테스트 웹앱", layout="wide")
 
-st.title("📈 특수 리밸 + DD/RSI/VIX 심층 분석 툴 (웹 버전)")
+st.title("📈 오늘 살까요 팔까요")
 
 
 # ---------- 세션 상태 초기화 ---------- #
@@ -256,7 +256,7 @@ def generate_today_summary(
         lines.append("      - 참고 통계:")
         lines.extend(stats_lines)
     lines.append("")
-    lines.append("※ 정리하면, ①은 '네가 미리 정한 규칙에 충실했을 때 오늘 해야 할 행동',")
+    lines.append("※ 정리하면, ①은 '미리 정한 규칙에 충실했을 때 오늘 해야 할 행동',")
     lines.append("   ②는 '과거 데이터만 봤을 때 이런 상황에서 대체로 유리했던 방향(매수/매도/중립)'을 알려주는 정보입니다.")
     lines.append("")
     lines.append("※ 통화 표시만 변환된 것이고, 실제 백테스트 계산은 달러 기준 가격으로 수행됩니다.")
@@ -1103,7 +1103,7 @@ with tab_ext:
                         st.pyplot(fig_scat)
 
                         st.info(
-                            "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도고, "
-                            "단기 예측을 과신하면 안 됨. "
-                            "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
+                            "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도임, "
+                           # "단기 예측을 과신하면 안 됨. "
+                          #  "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
                         )
