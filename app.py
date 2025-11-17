@@ -310,7 +310,10 @@ def plot_backtest_chart(result_df: pd.DataFrame, trade_log: list, currency: str,
 # =========================================================
 #                      탭 셋업
 # =========================================================
-tab_main, tab_hc, tab_ext = st.tabs(["메인 모드", "심층 모드", "프리장 예측 모드"])
+tab_main, tab_hc, tab_ext, tab_ai = st.tabs(
+    ["메인 백테스트", "심층 분석", "프리장/본장", "그래서 오늘 살까요?"]
+)
+
 
 
 # =========================================================
@@ -1107,3 +1110,67 @@ with tab_ext:
                            # "단기 예측을 과신하면 안 됨. "
                           #  "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
                         )
+
+
+
+
+with tab_ai:
+    st.subheader("🤖 그래서 오늘 살까요? — 확률 기반 단기/중기 상승 예측")
+
+    ticker_ai = st.text_input("티커 입력", "QQQ")
+
+    start_ai = st.date_input("분석 시작일", dt.date(2005,1,1))
+    end_ai = dt.date.today()
+
+    run_ai = st.button("상승 확률 분석 실행")
+
+    if run_ai:
+        with st.spinner("데이터 다운로드 중..."):
+            data = yf.download(ticker_ai, start=start_ai, end=end_ai, auto_adjust=True)
+            spy = yf.download("SPY", start=start_ai, end=end_ai, auto_adjust=True)
+            vix = yf.download("^VIX", start=start_ai, end=end_ai, auto_adjust=True)
+
+        if data.empty or spy.empty or vix.empty:
+            st.error("데이터가 부족합니다.")
+        else:
+            close = data["Close"].dropna()
+            spy_close = spy["Close"].dropna()
+            vix_close = vix["Close"].dropna()
+
+            # 상태 벡터
+            df_state = build_state_features(close, spy_close, vix_close).dropna()
+
+            # 미래 수익률
+            fut = compute_future_returns(close).dropna()
+
+            today_idx = df_state.index[-1]
+
+            similar = find_similar_states(df_state, today_idx)
+
+            if len(similar) < 30:
+                st.warning(f"유사 상태 표본이 너무 적습니다. ({len(similar)}일)")
+            else:
+                probs = compute_probability(similar, fut)
+
+                st.success(f"총 {probs['count']}일과 유사한 상태를 발견했습니다.")
+
+                st.markdown("### 📌 상승 확률")
+                st.write(pd.DataFrame({
+                    "기간": ["내일", "5일 뒤", "20일 뒤"],
+                    "상승 확률(%)": [probs["p1"], probs["p5"], probs["p20"]],
+                    "평균 수익률(%)": [probs["avg1"], probs["avg5"], probs["avg20"]],
+                }))
+
+                # 상태 요약
+                curr = df_state.loc[today_idx]
+                st.markdown("### 📌 오늘 상태 요약")
+                st.write(pd.DataFrame({
+                    "지표": [
+                        "DD(%)","RSI","z20(%)","z60(%)",
+                        "SPY_DD","SPY_RSI","SPY_z20","VIX 분위수(%)"
+                    ],
+                    "값":[
+                        curr["DD"], curr["RSI"], curr["z20"], curr["z60"],
+                        curr["SPY_DD"], curr["SPY_RSI"], curr["SPY_z20"], curr["VIX_pct"]
+                    ]
+                }))
