@@ -576,6 +576,12 @@ with tab_main:
 
                     st.text("\n".join(lines))
 
+                    # 🔹 여기부터 추가: 최적 파라미터를 왼쪽 입력값에 자동 반영ㄴㄴㄴㄴㄴ
+                    st.session_state["main_down_pct"] = float(d_best)
+                    st.session_state["main_up_pct"] = float(u_best)
+                    st.session_state["main_buy_frac"] = float(bf_best)
+                    st.session_state["main_sell_frac"] = float(sf_best)
+
 
 # =========================================================
 #                      심층 모드 탭
