@@ -83,7 +83,7 @@ with st.expander("🔍 티커 검색 도우미 (Yahoo Finance via RapidAPI)", ex
                 data = resp.json()
 
                 # 디버그용: 구조 확인하고 싶으면 주석 해제
-                # st.write("raw response:", data)
+                st.write("raw response:", data)
 
                 quotes = data.get("quotes") or []
                 if not quotes:
