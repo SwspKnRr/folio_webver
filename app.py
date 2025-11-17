@@ -8,6 +8,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from matplotlib import font_manager as fm
+import requests  # 🔹 추가
 
 import matplotlib
 matplotlib.rcParams['font.family'] = 'Gulim'
@@ -44,6 +45,64 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 st.set_page_config(page_title="리밸런싱 백테스트 / 예측 웹앱", layout="wide")
 
 st.title("📈 오늘 살까요 팔까요")
+
+# ---------- 티커 검색 도우미 ---------- #
+with st.expander("🔍 티커 검색 도우미 (Yahoo Finance 기반)", expanded=False):
+    query = st.text_input(
+        "회사 이름, ETF or 주식 이름, 티커 일부를 입력하세요 (예: apple, nasdaq, samsung, 005930)",
+        key="sym_search_q",
+    )
+    num_results = st.slider(
+        "최대 결과 수",
+        min_value=5,
+        max_value=30,
+        value=10,
+        step=5,
+        key="sym_search_n",
+    )
+
+    if st.button("티커 검색 실행", key="sym_search_btn"):
+        if not query.strip():
+            st.warning("검색어를 입력하세요.")
+        else:
+            try:
+                url = "https://query1.finance.yahoo.com/v1/finance/search"
+                params = {
+                    "q": query,
+                    "quotesCount": int(num_results),
+                    "newsCount": 0,
+                }
+                resp = requests.get(url, params=params, timeout=5)
+                resp.raise_for_status()
+                data = resp.json()
+                quotes = data.get("quotes", [])
+
+                if not quotes:
+                    st.info("검색 결과가 없습니다. 영어 이름/심볼로 다시 시도해 보세요.")
+                else:
+                    rows = []
+                    for q in quotes:
+                        rows.append(
+                            {
+                                "티커": q.get("symbol"),
+                                "이름": q.get("shortname")
+                                or q.get("longname")
+                                or "",
+                                "거래소": q.get("exchDisp")
+                                or q.get("exchange")
+                                or "",
+                                "자산 종류": q.get("quoteType") or "",
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(rows), hide_index=True)
+            except Exception as e:
+                st.error(f"검색 중 오류가 발생했습니다: {e}")
+
+    st.caption(
+        "※ 데이터 출처: Yahoo Finance. 해외 종목 위주로 잘 나오며, "
+        "국내 종목은 '005930.KS', '000660.KS'처럼 거래소 코드(KS/KQ 등)를 붙여야 할 수 있습니다."
+    )
+
 
 
 # ---------- 세션 상태 초기화 ---------- #
