@@ -16,6 +16,7 @@ from core import (
     DD_LABELS,
     compute_drawdown,
     compute_rsi,
+    analyze_premarket_vs_regular,  # 🔹 새로 추가
 )
 
 # ---------- 한글 폰트 설정 (Windows: Malgun Gothic) ---------- #
@@ -280,10 +281,14 @@ def plot_backtest_chart(result_df: pd.DataFrame, trade_log: list, currency: str,
 
 
 # =========================================================
+#                      탭 셋업
+# =========================================================
+tab_main, tab_hc, tab_ext = st.tabs(["메인 모드", "심층 모드", "프리장 예측 모드"])
+
+
+# =========================================================
 #                      메인 탭
 # =========================================================
-tab_main, tab_hc = st.tabs(["메인 모드", "심층 모드"])
-
 with tab_main:
     col_left, col_right = st.columns([1, 2])
 
@@ -360,7 +365,7 @@ with tab_main:
                     df = None
 
                 if df is None or df.empty or "Close" not in df.columns:
-                    st.error("डाउन로드된 데이터가 없습니다. 티커/기간을 다시 확인하세요.")
+                    st.error("다운로드된 데이터가 없습니다. 티커/기간을 다시 확인하세요.")
                 else:
                     # 실제로 받은 데이터 기간 보여주기
                     try:
@@ -687,12 +692,8 @@ with tab_hc:
                             vix_pct_val = None
                             try:
                                 if vix_pct is not None:
-                                    import numpy as np
-
                                     if isinstance(vix_pct, pd.Series):
                                         vix_pct_val = float(vix_pct.iloc[-1])
-                                    elif isinstance(vix_pct, (list, tuple, np.ndarray)):
-                                        vix_pct_val = float(np.asarray(vix_pct).ravel()[-1])
                                     else:
                                         vix_pct_val = float(vix_pct)
                             except Exception as e:
@@ -885,3 +886,172 @@ with tab_hc:
 
         else:
             st.info("왼쪽에서 설정 입력 후 '심층 분석 실행'을 눌러주세요.")
+
+
+# =========================================================
+#                 프리장 예측 모드 탭
+# =========================================================
+with tab_ext:
+    st.subheader("프리장 vs 본장 변동률 기반 예측 모드 (인트라데이 / Extended Hours)")
+
+    col_l, col_r = st.columns([1, 2])
+
+    with col_l:
+        today = dt.date.today()
+        max_span_days = 59  # yfinance 인트라데이 30m 기준 최대 약 60일
+        start_min_ext = today - dt.timedelta(days=max_span_days)
+
+        ticker_ext = st.text_input("티커 (미국 ETF/주식 권장, 예: QQQ, SPY, VTI)", "QQQ", key="ext_ticker")
+
+        start_ext = st.date_input(
+            "시작일 (최대 약 60일 전까지)",
+            today - dt.timedelta(days=30),
+            key="ext_start",
+            min_value=start_min_ext,
+            max_value=today,
+        )
+        end_ext = st.date_input(
+            "종료일",
+            today,
+            key="ext_end",
+            min_value=start_min_ext,
+            max_value=today,
+        )
+
+        interval_label = st.selectbox(
+            "인트라데이 캔들 간격 (프리장/본장 구분용)",
+            ["30분", "60분"],
+            index=0,
+            key="ext_interval",
+        )
+        interval_map = {"30분": "30m", "60분": "60m"}
+        interval_code = interval_map[interval_label]
+
+        strong_thr = st.number_input(
+            "강한 프리장 변동 기준 (절댓값, %)",
+            value=1.0,
+            step=0.5,
+            key="ext_strong_thr",
+        )
+
+        st.caption(
+            "- 프리장: 04:00 ~ 09:30 (미국 동부시간 기준)\n"
+            "- 본장: 09:30 ~ 16:00 (미국 동부시간 기준)\n"
+            "- yfinance 인트라데이 제한 때문에 최대 약 60일만 분석 가능"
+        )
+
+        run_ext = st.button("프리장 vs 본장 통계 분석 실행", key="btn_run_ext")
+
+    with col_r:
+        if run_ext:
+            if not ticker_ext:
+                st.error("티커를 입력하세요.")
+            else:
+                if start_ext > end_ext:
+                    st.error("시작일이 종료일보다 이후입니다.")
+                else:
+                    start_str = start_ext.strftime("%Y-%m-%d")
+                    end_str = (end_ext + dt.timedelta(days=1)).strftime("%Y-%m-%d")  # yfinance end는 exclusive 느낌이라 하루 더
+
+                    try:
+                        daily_df, stats = analyze_premarket_vs_regular(
+                            ticker_ext,
+                            start=start_str,
+                            end=end_str,
+                            interval=interval_code,
+                            strong_move_thresh=float(strong_thr),
+                        )
+                    except Exception as e:
+                        st.error(f"프리장/본장 분석 중 오류: {e}")
+                    else:
+                        n = stats["n_days"]
+                        st.markdown("### 1) 사용된 표본 개요")
+
+                        info_lines = []
+                        info_lines.append(f"[{ticker_ext}] 인트라데이 데이터 기반 프리장 vs 본장 분석")
+                        info_lines.append("")
+                        info_lines.append(
+                            f"- 실제 분석된 거래일 수: {n}일 "
+                            f"({stats['start_date']} ~ {stats['end_date']})"
+                        )
+                        info_lines.append(f"- 인트라데이 간격: {interval_label} 캔들")
+                        info_lines.append("")
+
+                        corr = stats["corr_pre_reg"]
+                        slope = stats["reg_slope_per_1pct_pre"]
+
+                        if corr is not None:
+                            info_lines.append(f"- 프리장 수익률 vs 본장 수익률 피어슨 상관계수: {corr:.3f}")
+                        else:
+                            info_lines.append("- 상관계수: 계산 불가 (표본 변동성 부족)")
+
+                        if slope is not None:
+                            info_lines.append(
+                                f"- 단순 회귀 기울기: 프리장 1% 변화 → 본장 평균 {slope:.2f}% 변화"
+                            )
+                        else:
+                            info_lines.append("- 회귀 기울기: 계산 불가 (분산 0에 가까움)")
+
+                        st.text("\n".join(info_lines))
+
+                        st.markdown("### 2) 조건부 확률 / 패턴 통계")
+
+                        def fmt(v):
+                            if v is None:
+                                return "계산 불가"
+                            return f"{v:.1f}%"
+
+                        p_up = fmt(stats["p_reg_up"])
+                        p_down = fmt(stats["p_reg_down"])
+                        p_up_pre_up = fmt(stats["p_reg_up_given_pre_up"])
+                        p_up_pre_down = fmt(stats["p_reg_up_given_pre_down"])
+                        p_same_sign = fmt(stats["p_same_sign"])
+                        thr = stats["strong_move_thresh"]
+                        p_up_strong_up = fmt(stats["p_reg_up_given_strong_pre_up"])
+                        p_up_strong_down = fmt(stats["p_reg_up_given_strong_pre_down"])
+
+                        cond_lines = []
+                        cond_lines.append(f"- 전체 본장 상승 확률: {p_up} (하락: {p_down})")
+                        cond_lines.append("")
+                        cond_lines.append(f"- 프리장 상승(>0%)인 날, 본장 상승 확률: {p_up_pre_up}")
+                        cond_lines.append(f"- 프리장 하락(<0%)인 날, 본장 상승 확률: {p_up_pre_down}")
+                        cond_lines.append("")
+                        cond_lines.append(f"- 프리장과 본장이 같은 방향(둘 다 상승/둘 다 하락)일 확률: {p_same_sign}")
+                        cond_lines.append("")
+                        cond_lines.append(
+                            f"- |프리장| ≥ {thr:.1f}% 인 '강한 프리장'일 때:"
+                        )
+                        cond_lines.append(
+                            f"   · 프리장이 +{thr:.1f}% 이상일 때 본장 상승 확률: {p_up_strong_up}"
+                        )
+                        cond_lines.append(
+                            f"   · 프리장이 -{thr:.1f}% 이하일 때 본장 상승 확률: {p_up_strong_down}"
+                        )
+
+                        st.text("\n".join(cond_lines))
+
+                        st.markdown("### 3) 일별 프리장 / 본장 수익률 테이블 (최근 30일)")
+
+                        show_df = daily_df[["PreRet", "RegRet"]].copy()
+                        show_df.columns = ["프리장 수익률(%)", "본장 수익률(%)"]
+                        st.dataframe(
+                            show_df.sort_index(ascending=False).head(30)
+                        )
+
+                        st.markdown("### 4) 프리장 vs 본장 수익률 산점도")
+
+                        fig_scat, ax_scat = plt.subplots(figsize=(5, 4))
+                        ax_scat.scatter(daily_df["PreRet"], daily_df["RegRet"], alpha=0.7)
+                        ax_scat.axhline(0, linestyle="--", linewidth=1)
+                        ax_scat.axvline(0, linestyle="--", linewidth=1)
+                        ax_scat.set_xlabel("프리장 수익률 (%)")
+                        ax_scat.set_ylabel("본장 수익률 (%)")
+                        ax_scat.set_title(f"{ticker_ext} 프리장 vs 본장 일별 수익률 산점도")
+                        fig_scat.tight_layout()
+                        st.pyplot(fig_scat)
+
+                        st.info(
+                            "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도고, "
+                            "단기 예측을 과신하면 그대로 손실 러시 난다. "
+                            "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
+                        )

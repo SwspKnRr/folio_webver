@@ -1,5 +1,6 @@
 # core.py
 import datetime as dt
+from datetime import time
 from typing import Tuple, Optional
 
 import numpy as np
@@ -460,6 +461,8 @@ def optimize_param_grid(
         for u in up_grid:
             for bf in buy_grid:
                 for sf in sell_grid:
+               
+
                     total_tests += 1
                     try:
                         _, _, _, summary = run_grid_rebal_backtest(
@@ -483,3 +486,160 @@ def optimize_param_grid(
                         best_combo = (d, u, bf, sf, summary)
 
     return best_combo, total_tests, success_tests
+
+
+# -------------------- 프리장 vs 본장 통계 분석 -------------------- #
+
+def analyze_premarket_vs_regular(
+    ticker: str,
+    start: str,
+    end: str,
+    interval: str = "30m",
+    strong_move_thresh: float = 1.0,
+):
+    """
+    프리장(04:00~09:30) / 본장(09:30~16:00) 변동률을 일 단위로 뽑아서
+    - PreRet: 프리장 %수익률
+    - RegRet: 본장 %수익률
+    를 계산하고,
+    각종 조건부 확률 + 상관계수 + 단순 회귀 기울기 등을 반환.
+
+    반환:
+      daily_df (index=Date, cols: PreRet, RegRet)
+      stats (dict)
+    """
+    try:
+        df = yf.download(
+            ticker,
+            start=start,
+            end=end,
+            interval=interval,
+            prepost=True,
+            auto_adjust=False,
+            progress=False,
+        )
+    except Exception as e:
+        raise ValueError(f"yfinance 인트라데이 다운로드 실패: {e}")
+
+    if df is None or df.empty or "Open" not in df.columns or "Close" not in df.columns:
+        raise ValueError("인트라데이 데이터가 비어 있거나 컬럼이 부족합니다.")
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("인트라데이 데이터 인덱스가 DatetimeIndex가 아닙니다.")
+
+    # 타임존을 미국 동부시간으로 정규화 (NYSE 기준)
+    idx = df.index
+    if idx.tz is None:
+        df.index = idx.tz_localize("UTC").tz_convert("America/New_York")
+    else:
+        df.index = idx.tz_convert("America/New_York")
+
+    df = df.sort_index()
+
+    df["date"] = df.index.date
+    # 그룹핑용
+    daily_rows = []
+
+    for d, grp in df.groupby("date"):
+        # pre-market: 04:00 ~ 09:30
+        pre_mask = (grp.index.time >= time(4, 0)) & (grp.index.time < time(9, 30))
+        reg_mask = (grp.index.time >= time(9, 30)) & (grp.index.time <= time(16, 0))
+
+        pre = grp.loc[pre_mask]
+        reg = grp.loc[reg_mask]
+
+        if pre.empty or reg.empty:
+            continue
+
+        pre_open = float(pre["Open"].iloc[0])
+        pre_close = float(pre["Close"].iloc[-1])
+        reg_open = float(reg["Open"].iloc[0])
+        reg_close = float(reg["Close"].iloc[-1])
+
+        if pre_open <= 0 or reg_open <= 0:
+            continue
+
+        pre_ret = (pre_close / pre_open - 1.0) * 100.0
+        reg_ret = (reg_close / reg_open - 1.0) * 100.0
+
+        daily_rows.append(
+            {
+                "Date": pd.to_datetime(d),
+                "PreRet": pre_ret,
+                "RegRet": reg_ret,
+            }
+        )
+
+    if not daily_rows:
+        raise ValueError("프리장/본장 데이터가 충분하지 않습니다. 기간을 줄이거나 다른 티커를 시도해 보세요.")
+
+    daily_df = pd.DataFrame(daily_rows)
+    daily_df = daily_df.sort_values("Date")
+    daily_df.set_index("Date", inplace=True)
+
+    if len(daily_df) < 10:
+        raise ValueError(f"유효한 일 수가 {len(daily_df)}일밖에 없습니다. (최소 10일 권장)")
+
+    pre = daily_df["PreRet"]
+    reg = daily_df["RegRet"]
+
+    # 상관계수 / 회귀 기울기
+    if pre.std() > 0 and reg.std() > 0:
+        corr = float(pre.corr(reg))
+        var_pre = float(pre.var())
+        if var_pre > 0:
+            cov = float(np.cov(pre, reg, ddof=1)[0, 1])
+            slope = cov / var_pre  # Reg = a + slope * Pre
+        else:
+            slope = None
+    else:
+        corr = None
+        slope = None
+
+    # 조건부 확률들
+    reg_up = reg > 0
+    reg_down = reg < 0
+    pre_up = pre > 0
+    pre_down = pre < 0
+
+    def safe_ratio(num, den):
+        num = float(num)
+        den = float(den)
+        if den <= 0:
+            return None
+        return num / den * 100.0
+
+    p_up = safe_ratio(reg_up.sum(), len(reg))
+    p_down = safe_ratio(reg_down.sum(), len(reg))
+
+    p_up_given_pre_up = safe_ratio((reg_up & pre_up).sum(), pre_up.sum())
+    p_up_given_pre_down = safe_ratio((reg_up & pre_down).sum(), pre_down.sum())
+
+    same_sign = (pre * reg) > 0
+    p_same_sign = safe_ratio(same_sign.sum(), len(reg))
+
+    # 절댓값 기준 "강한 프리장" 조건
+    thr = float(abs(strong_move_thresh))
+    strong_up = pre >= thr
+    strong_down = pre <= -thr
+
+    p_up_given_strong_up = safe_ratio((reg_up & strong_up).sum(), strong_up.sum())
+    p_up_given_strong_down = safe_ratio((reg_up & strong_down).sum(), strong_down.sum())
+
+    stats = {
+        "n_days": int(len(daily_df)),
+        "start_date": str(daily_df.index.min().date()),
+        "end_date": str(daily_df.index.max().date()),
+        "corr_pre_reg": corr,
+        "reg_slope_per_1pct_pre": slope,  # 프리장 1% 변화당 본장 평균 변화(%)
+        "p_reg_up": p_up,
+        "p_reg_down": p_down,
+        "p_reg_up_given_pre_up": p_up_given_pre_up,
+        "p_reg_up_given_pre_down": p_up_given_pre_down,
+        "p_same_sign": p_same_sign,
+        "strong_move_thresh": thr,
+        "p_reg_up_given_strong_pre_up": p_up_given_strong_up,
+        "p_reg_up_given_strong_pre_down": p_up_given_strong_down,
+    }
+
+    return daily_df, stats
