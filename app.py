@@ -1008,7 +1008,7 @@ with tab_ext:
                             return f"{v:.1f}%"
                         
                         # --- 산점도 그리기 직전 (폰트 깨짐 방지용) ---
-                        plt.rcParams['font.family'] = 'Malgun Gothic'
+                        plt.rcParams['font.family'] = 'Gulim'
                         plt.rcParams['axes.unicode_minus'] = False
 
                         fig_scat, ax_scat = plt.subplots(figsize=(5, 4))
