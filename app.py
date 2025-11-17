@@ -46,10 +46,10 @@ st.set_page_config(page_title="리밸런싱 백테스트 / 예측 웹앱", layou
 
 st.title("📈 오늘 살까요 팔까요")
 
-# ---------- 티커 검색 도우미 ---------- #
-with st.expander("🔍 티커 검색 도우미 (Yahoo Finance 기반)", expanded=False):
+# # ---------- 티커 검색 도우미 (RapidAPI Yahoo Finance) ---------- #
+with st.expander("🔍 티커 검색 도우미 (Yahoo Finance via RapidAPI)", expanded=False):
     query = st.text_input(
-        "회사 이름, ETF or 주식 이름, 티커 일부를 입력하세요 (예: apple, nasdaq, samsung, 005930)",
+        "회사 이름, ETF 이름, 티커 일부를 입력하세요 (예: apple, nasdaq, samsung, 005930)",
         key="sym_search_q",
     )
     num_results = st.slider(
@@ -66,17 +66,23 @@ with st.expander("🔍 티커 검색 도우미 (Yahoo Finance 기반)", expanded
             st.warning("검색어를 입력하세요.")
         else:
             try:
-                url = "https://query1.finance.yahoo.com/v1/finance/search"
+                # 🔐 RapidAPI 설정은 .streamlit/secrets.toml 에서 읽어옴
+                url = st.secrets["YF_SEARCH_URL"]
+                headers = {
+                    "x-rapidapi-key": st.secrets["RAPIDAPI_KEY"],
+                    "x-rapidapi-host": st.secrets["RAPIDAPI_HOST"],
+                }
                 params = {
                     "q": query,
                     "quotesCount": int(num_results),
                     "newsCount": 0,
                 }
-                resp = requests.get(url, params=params, timeout=5)
+
+                resp = requests.get(url, headers=headers, params=params, timeout=5)
                 resp.raise_for_status()
                 data = resp.json()
-                quotes = data.get("quotes", [])
 
+                quotes = data.get("quotes", [])
                 if not quotes:
                     st.info("검색 결과가 없습니다. 영어 이름/심볼로 다시 시도해 보세요.")
                 else:
@@ -95,13 +101,23 @@ with st.expander("🔍 티커 검색 도우미 (Yahoo Finance 기반)", expanded
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+            except KeyError as e:
+                st.error(
+                    f"secrets 설정이 빠졌습니다: {e}\n"
+                    "→ .streamlit/secrets.toml 에 RAPIDAPI_KEY, RAPIDAPI_HOST, YF_SEARCH_URL 을 설정하세요."
+                )
+            except requests.HTTPError as e:
+                st.error(f"HTTP 오류: {e}")
             except Exception as e:
-                st.error(f"검색 중 오류가 발생했습니다: {e}")
+                st.error(f"검색 중 예기치 못한 오류가 발생했습니다: {e}")
 
     st.caption(
-        "※ 데이터 출처: Yahoo Finance. 해외 종목 위주로 잘 나오며, "
-        "국내 종목은 '005930.KS', '000660.KS'처럼 거래소 코드(KS/KQ 등)를 붙여야 할 수 있습니다."
+        "※ 데이터 출처: Yahoo Finance (RapidAPI 경유).\n"
+        "해외 종목/ETF 위주로 잘 나오며, 국내 종목은 '005930.KS', '000660.KS'처럼 "
+        "거래소 코드(KS/KQ 등)를 붙여야 할 수 있습니다."
     )
+
 
 
 
