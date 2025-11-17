@@ -10,7 +10,6 @@ import pandas as pd
 import matplotlib
 matplotlib.rcParams['font.family'] = 'Gulim'
 matplotlib.rcParams['axes.unicode_minus'] = False
-matplotlib.font_manager._rebuild()
 
 
 from core import (
@@ -1013,6 +1012,8 @@ with tab_ext:
 
                         fig_scat, ax_scat = plt.subplots(figsize=(5, 4))
                         ax_scat.scatter(daily_df["PreRet"], daily_df["RegRet"], alpha=0.7)
+                        ax_scat.axhline(0, linestyle="--", linewidth=1)
+                        ax_scat.axvline(0, linestyle="--", linewidth=1)
 
 
                         p_up = fmt(stats["p_reg_up"])
