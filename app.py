@@ -24,6 +24,7 @@ from core import (
     compute_drawdown,
     compute_rsi,
     analyze_premarket_vs_regular,  # 🔹 새로 추가
+    analyze_hybrid_signal,         # 🔹 네 번째 탭(오늘 살까요?)
 )
 
 # ---------- 한글 폰트 설정 (Gulim, 프로젝트 내 폰트 사용) ---------- #
@@ -1045,16 +1046,6 @@ with tab_ext:
                             if v is None:
                                 return "계산 불가"
                             return f"{v:.1f}%"
-                        
-                        # --- 산점도 그리기 직전 (폰트 깨짐 방지용) ---
-                        plt.rcParams['font.family'] = 'Gulim'
-                        plt.rcParams['axes.unicode_minus'] = False
-
-                        fig_scat, ax_scat = plt.subplots(figsize=(5, 4))
-                        ax_scat.scatter(daily_df["PreRet"], daily_df["RegRet"], alpha=0.7)
-                        ax_scat.axhline(0, linestyle="--", linewidth=1)
-                        ax_scat.axvline(0, linestyle="--", linewidth=1)
-
 
                         p_up = fmt(stats["p_reg_up"])
                         p_down = fmt(stats["p_reg_down"])
@@ -1095,6 +1086,10 @@ with tab_ext:
 
                         st.markdown("### 4) 프리장 vs 본장 수익률 산점도")
 
+                        # 폰트 세팅 (웹앱 환경용)
+                        plt.rcParams["font.family"] = "Gulim"
+                        plt.rcParams["axes.unicode_minus"] = False
+
                         fig_scat, ax_scat = plt.subplots(figsize=(5, 4))
                         ax_scat.scatter(daily_df["PreRet"], daily_df["RegRet"], alpha=0.7)
                         ax_scat.axhline(0, linestyle="--", linewidth=1)
@@ -1106,71 +1101,146 @@ with tab_ext:
                         st.pyplot(fig_scat)
 
                         st.info(
-                            "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도임, "
-                           # "단기 예측을 과신하면 안 됨. "
-                          #  "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
+                            "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도입니다. "
+                            "단기 예측을 과신하지 말고, 프리장과 본장의 연결 고리를 감각적으로 보정하는 용도로만 사용하세요."
                         )
 
-
-
-
+# =========================================================
+#              '그래서 오늘 살까요?' 탭
+# =========================================================
 with tab_ai:
     st.subheader("🤖 그래서 오늘 살까요? — 확률 기반 단기/중기 상승 예측")
 
-    ticker_ai = st.text_input("티커 입력", "QQQ")
+    col_l, col_r = st.columns([1, 2])
 
-    start_ai = st.date_input("분석 시작일", dt.date(2005,1,1))
-    end_ai = dt.date.today()
+    with col_l:
+        today = dt.date.today()
+        default_start = today - dt.timedelta(days=365 * 10)
 
-    run_ai = st.button("상승 확률 분석 실행")
+        ticker_ai = st.text_input("티커 (예: QQQ, SPY, VTI)", "QQQ", key="ai_ticker")
 
-    if run_ai:
-        with st.spinner("데이터 다운로드 중..."):
-            data = yf.download(ticker_ai, start=start_ai, end=end_ai, auto_adjust=True)
-            spy = yf.download("SPY", start=start_ai, end=end_ai, auto_adjust=True)
-            vix = yf.download("^VIX", start=start_ai, end=end_ai, auto_adjust=True)
+        start_ai = st.date_input(
+            "분석 시작일",
+            default_start,
+            key="ai_start",
+            min_value=default_start,
+            max_value=today,
+        )
+        end_ai = st.date_input(
+            "분석 종료일",
+            today,
+            key="ai_end",
+            min_value=start_ai,
+            max_value=today,
+        )
 
-        if data.empty or spy.empty or vix.empty:
-            st.error("데이터가 부족합니다.")
+        min_samples = st.number_input(
+            "최소 표본 수 (유사한 과거 일 수)",
+            min_value=30,
+            max_value=1000,
+            value=80,
+            step=10,
+            key="ai_min_samples",
+        )
+
+        run_ai = st.button("상승 확률 분석 실행", key="btn_run_ai")
+
+    with col_r:
+        if not run_ai:
+            st.info("왼쪽에서 설정 후 **'상승 확률 분석 실행'** 버튼을 눌러주세요.")
         else:
-            close = data["Close"].dropna()
-            spy_close = spy["Close"].dropna()
-            vix_close = vix["Close"].dropna()
+            # 이동평균/미래 수익률 계산용으로 여유 있게 앞쪽 데이터 더 받아오기
+            dl_start = start_ai - dt.timedelta(days=365)
 
-            # 상태 벡터
-            df_state = build_state_features(close, spy_close, vix_close).dropna()
+            with st.spinner("데이터 다운로드 및 분석 중..."):
+                data = yf.download(
+                    ticker_ai,
+                    start=dl_start,
+                    end=end_ai + dt.timedelta(days=1),
+                    auto_adjust=True,
+                    progress=False,
+                )
+                spy = yf.download(
+                    "SPY",
+                    start=dl_start,
+                    end=end_ai + dt.timedelta(days=1),
+                    auto_adjust=True,
+                    progress=False,
+                )
+                vix = yf.download(
+                    "^VIX",
+                    start=dl_start,
+                    end=end_ai + dt.timedelta(days=1),
+                    auto_adjust=False,
+                    progress=False,
+                )
 
-            # 미래 수익률
-            fut = compute_future_returns(close).dropna()
-
-            today_idx = df_state.index[-1]
-
-            similar = find_similar_states(df_state, today_idx)
-
-            if len(similar) < 30:
-                st.warning(f"유사 상태 표본이 너무 적습니다. ({len(similar)}일)")
+            if data.empty:
+                st.error("티커 데이터가 비어 있습니다.")
+            elif spy.empty or vix.empty:
+                st.error("SPY 또는 VIX 데이터를 불러오지 못했습니다.")
             else:
-                probs = compute_probability(similar, fut)
+                close = data["Close"].dropna()
+                spy_close = spy["Close"].dropna()
+                vix_close = vix["Close"].dropna()
 
-                st.success(f"총 {probs['count']}일과 유사한 상태를 발견했습니다.")
+                probs, today_state = analyze_hybrid_signal(
+                    close, spy_close, vix_close, min_samples=int(min_samples)
+                )
 
-                st.markdown("### 📌 상승 확률")
-                st.write(pd.DataFrame({
-                    "기간": ["내일", "5일 뒤", "20일 뒤"],
-                    "상승 확률(%)": [probs["p1"], probs["p5"], probs["p20"]],
-                    "평균 수익률(%)": [probs["avg1"], probs["avg5"], probs["avg20"]],
-                }))
+                if probs is None or today_state is None:
+                    st.warning("유효한 표본이 부족해서 확률을 계산할 수 없습니다.")
+                else:
+                    st.success(f"총 {probs['count']}일의 유사 상태를 기반으로 계산했습니다.")
 
-                # 상태 요약
-                curr = df_state.loc[today_idx]
-                st.markdown("### 📌 오늘 상태 요약")
-                st.write(pd.DataFrame({
-                    "지표": [
-                        "DD(%)","RSI","z20(%)","z60(%)",
-                        "SPY_DD","SPY_RSI","SPY_z20","VIX 분위수(%)"
-                    ],
-                    "값":[
-                        curr["DD"], curr["RSI"], curr["z20"], curr["z60"],
-                        curr["SPY_DD"], curr["SPY_RSI"], curr["SPY_z20"], curr["VIX_pct"]
-                    ]
-                }))
+                    # 상승 확률 요약
+                    result_df = pd.DataFrame(
+                        {
+                            "기간": ["내일", "5일 뒤", "20일 뒤"],
+                            "상승 확률(%)": [probs["p1"], probs["p5"], probs["p20"]],
+                            "평균 수익률(%)": [probs["avg1"], probs["avg5"], probs["avg20"]],
+                        }
+                    )
+                    st.markdown("### 📌 상승 확률 요약")
+                    st.dataframe(result_df, hide_index=True)
+
+                    # 오늘 상태 벡터 요약
+                    st.markdown("### 📌 오늘 상태 벡터 요약")
+                    state_df = pd.DataFrame(
+                        {
+                            "지표": [
+                                "DD(%)",
+                                "RSI",
+                                "z20(%)",
+                                "z60(%)",
+                                "SPY_DD(%)",
+                                "SPY_RSI",
+                                "SPY_z20(%)",
+                                "VIX 분위수(%)",
+                                "3일 수익률(%)",
+                                "10일 수익률(%)",
+                            ],
+                            "값": [
+                                float(today_state["DD"]),
+                                float(today_state["RSI"]),
+                                float(today_state["z20"]),
+                                float(today_state["z60"]),
+                                float(today_state["SPY_DD"]),
+                                float(today_state["SPY_RSI"]),
+                                float(today_state["SPY_z20"]),
+                                float(today_state["VIX_pct"]),
+                                float(today_state["ret_3d"]),
+                                float(today_state["ret_10d"]),
+                            ],
+                        }
+                    )
+                    st.dataframe(state_df, hide_index=True)
+
+                    st.info(
+                        "※ 이 탭은 과거에 '지금과 비슷한 상태'였던 날들의 통계를 기반으로 "
+                        "단기/중기 상승 확률을 추정합니다. "
+                        "확률이 높다고 해서 반드시 오르는 것은 아니니, 리스크 관리는 따로 해 주세요."
+                    )
+
+
+

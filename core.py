@@ -644,123 +644,173 @@ def analyze_premarket_vs_regular(
 
     return daily_df, stats
 
-# ================================================================
-#   HYBRID SIGNAL ENGINE  (그래서 오늘 살까요?)
-# ================================================================
+# -------------------- HYBRID SIGNAL ENGINE: '그래서 오늘 살까요?' -------------------- #
 
-import numpy as np
-import pandas as pd
-import yfinance as yf
+def _build_state_features(prices: pd.Series, spy: pd.Series, vix_series: pd.Series) -> pd.DataFrame:
+    """공통 인덱스 구간으로 정렬한 뒤 상태 벡터를 계산한다."""
+    # 공통 인덱스 교집합
+    idx = prices.index.intersection(spy.index).intersection(vix_series.index)
+    df = pd.DataFrame(
+        {
+            "Price": prices.loc[idx],
+            "SPY": spy.loc[idx],
+            "VIX": vix_series.loc[idx],
+        }
+    ).dropna()
 
-def compute_ma(series, window):
-    return series.rolling(window).mean()
+    if len(df) < 80:
+        return pd.DataFrame()
 
-def compute_zscore(price, ma):
-    return (price - ma) / ma * 100.0
-
-def compute_future_returns(prices):
-    """미래 1일 / 5일 / 20일 수익률 계산"""
-    df = pd.DataFrame({"Price": prices})
-    df["ret_1d"] = df["Price"].shift(-1) / df["Price"] - 1
-    df["ret_5d"] = df["Price"].shift(-5) / df["Price"] - 1
-    df["ret_20d"] = df["Price"].shift(-20) / df["Price"] - 1
-    return df
-
-def classify_candle(open_, close_):
-    if close_ > open_ * 1.02:
-        return "bull"
-    elif close_ < open_ * 0.98:
-        return "bear"
-    else:
-        return "neutral"
-
-def build_state_features(prices, spy, vix_series):
-    """
-    prices: 티커 종가 시리즈
-    spy: SPY 종가 시리즈
-    vix_series: VIX 종가 시리즈
-    """
-    df = pd.DataFrame({
-        "Price": prices,
-        "SPY": spy,
-        "VIX": vix_series
-    }).dropna()
-
-    # MA
+    # 이동평균
     df["MA20"] = df["Price"].rolling(20).mean()
     df["MA60"] = df["Price"].rolling(60).mean()
 
-    df["z20"] = (df["Price"] - df["MA20"]) / df["MA20"] * 100
-    df["z60"] = (df["Price"] - df["MA60"]) / df["MA60"] * 100
+    df["z20"] = (df["Price"] - df["MA20"]) / df["MA20"] * 100.0
+    df["z60"] = (df["Price"] - df["MA60"]) / df["MA60"] * 100.0
 
-    # RSI
+    # RSI, DD
     df["RSI"] = compute_rsi(df["Price"], 14)
-
-    # DD
     df["DD"] = compute_drawdown(df["Price"])
 
     # SPY 상태
     df["SPY_MA20"] = df["SPY"].rolling(20).mean()
     df["SPY_RSI"] = compute_rsi(df["SPY"], 14)
     df["SPY_DD"] = compute_drawdown(df["SPY"])
-    df["SPY_z20"] = (df["SPY"] - df["SPY_MA20"]) / df["SPY_MA20"] * 100
+    df["SPY_z20"] = (df["SPY"] - df["SPY_MA20"]) / df["SPY_MA20"] * 100.0
 
-    # VIX 분위수
-    v_now = df["VIX"].iloc[-1]
-    v_pct = (df["VIX"] <= v_now).mean() * 100
-    df["VIX_pct"] = df["VIX"].rank(pct=True) * 100
+    # VIX 분위수 (시계열 내 순위 기준)
+    df["VIX_pct"] = df["VIX"].rank(pct=True) * 100.0
 
     # 단기 수익률
-    df["ret_3d"] = df["Price"].pct_change(3) * 100
-    df["ret_10d"] = df["Price"].pct_change(10) * 100
+    df["ret_3d"] = df["Price"].pct_change(3) * 100.0
+    df["ret_10d"] = df["Price"].pct_change(10) * 100.0
 
     return df
 
-def find_similar_states(df, today_idx, min_samples=80):
-    """
-    df: build_state_features 로 만든 DF
-    today_idx: 오늘 날짜 인덱스
-    min_samples: 최소 표본 수
-    """
 
-    today = df.loc[today_idx]
+def _compute_future_returns(prices: pd.Series) -> pd.DataFrame:
+    """미래 1/5/20 거래일 수익률 (단위: %) 계산"""
+    s = prices.sort_index()
+    df = pd.DataFrame({"Price": s})
+    df["ret_1d"] = (df["Price"].shift(-1) / df["Price"] - 1.0) * 100.0
+    df["ret_5d"] = (df["Price"].shift(-5) / df["Price"] - 1.0) * 100.0
+    df["ret_20d"] = (df["Price"].shift(-20) / df["Price"] - 1.0) * 100.0
+    return df
 
-    # 조건 범위
+
+def _find_similar_states(
+    state_df: pd.DataFrame,
+    today_row: pd.Series,
+    min_samples: int = 80,
+) -> pd.DataFrame:
+    """상태 DF와 오늘 상태를 기준으로 유사 상태들을 찾는다."""
+    base = state_df.copy()
+
+    # 오늘 자신은 제외
+    if today_row.name in base.index:
+        base = base.drop(index=today_row.name)
+
+    # 1차 조건 (타이트)
     cond = (
-        (df["DD"].between(today["DD"] - 5, today["DD"] + 5)) &
-        (df["RSI"].between(today["RSI"] - 10, today["RSI"] + 10)) &
-        (df["z20"].between(today["z20"] - 5, today["z20"] + 5)) &
-        (df["z60"].between(today["z60"] - 5, today["z60"] + 5)) &
-        (df["ret_3d"].between(today["ret_3d"] - 5, today["ret_3d"] + 5)) &
-        (df["SPY_RSI"].between(today["SPY_RSI"] - 10, today["SPY_RSI"] + 10)) &
-        (df["VIX_pct"].between(today["VIX_pct"] - 15, today["VIX_pct"] + 15))
+        base["DD"].between(today_row["DD"] - 5, today_row["DD"] + 5)
+        & base["RSI"].between(today_row["RSI"] - 10, today_row["RSI"] + 10)
+        & base["z20"].between(today_row["z20"] - 5, today_row["z20"] + 5)
+        & base["z60"].between(today_row["z60"] - 5, today_row["z60"] + 5)
+        & base["ret_3d"].between(today_row["ret_3d"] - 5, today_row["ret_3d"] + 5)
+        & base["SPY_RSI"].between(today_row["SPY_RSI"] - 10, today_row["SPY_RSI"] + 10)
+        & base["VIX_pct"].between(today_row["VIX_pct"] - 15, today_row["VIX_pct"] + 15)
     )
 
-    candidates = df[cond].dropna()
+    candidates = base[cond].dropna()
 
-    # 너무 적으면 조건 완화
+    # 표본이 너무 적으면 조건 완화
     if len(candidates) < min_samples:
         cond = (
-            (df["DD"].between(today["DD"] - 8, today["DD"] + 8)) &
-            (df["RSI"].between(today["RSI"] - 15, today["RSI"] + 15)) &
-            (df["z20"].between(today["z20"] - 8, today["z20"] + 8)) &
-            (df["VIX_pct"].between(today["VIX_pct"] - 20, today["VIX_pct"] + 20))
+            base["DD"].between(today_row["DD"] - 8, today_row["DD"] + 8)
+            & base["RSI"].between(today_row["RSI"] - 15, today_row["RSI"] + 15)
+            & base["z20"].between(today_row["z20"] - 8, today_row["z20"] + 8)
+            & base["VIX_pct"].between(today_row["VIX_pct"] - 20, today_row["VIX_pct"] + 20)
         )
-        candidates = df[cond].dropna()
+        candidates = base[cond].dropna()
 
     return candidates
 
-def compute_probability(similar_df, fut_df):
-    idx = similar_df.index
-    sub = fut_df.loc[idx]
+
+def _compute_probability_from_df(similar_df: pd.DataFrame) -> dict:
+    """similar_df 안에 ret_1d, ret_5d, ret_20d 컬럼이 포함되어 있다고 가정."""
+    if similar_df.empty:
+        return {
+            "p1": None,
+            "p5": None,
+            "p20": None,
+            "avg1": None,
+            "avg5": None,
+            "avg20": None,
+            "count": 0,
+        }
+
+    sub = similar_df.dropna(subset=["ret_1d", "ret_5d", "ret_20d"])
+
+    if sub.empty:
+        return {
+            "p1": None,
+            "p5": None,
+            "p20": None,
+            "avg1": None,
+            "avg5": None,
+            "avg20": None,
+            "count": 0,
+        }
+
+    def pct_pos(col: pd.Series) -> float:
+        return float((col > 0).mean() * 100.0)
 
     result = {
-        "p1": (sub["ret_1d"] > 0).mean() * 100,
-        "p5": (sub["ret_5d"] > 0).mean() * 100,
-        "p20": (sub["ret_20d"] > 0).mean() * 100,
-        "avg1": sub["ret_1d"].mean() * 100,
-        "avg5": sub["ret_5d"].mean() * 100,
-        "avg20": sub["ret_20d"].mean() * 100,
-        "count": len(sub)
+        "p1": pct_pos(sub["ret_1d"]),
+        "p5": pct_pos(sub["ret_5d"]),
+        "p20": pct_pos(sub["ret_20d"]),
+        "avg1": float(sub["ret_1d"].mean()),
+        "avg5": float(sub["ret_5d"].mean()),
+        "avg20": float(sub["ret_20d"].mean()),
+        "count": int(len(sub)),
     }
     return result
+
+
+def analyze_hybrid_signal(
+    prices: pd.Series,
+    spy_prices: pd.Series,
+    vix_series: pd.Series,
+    min_samples: int = 80,
+):
+    """네 번째 탭 '그래서 오늘 살까요?'용 하이브리드 분석 엔진."""
+    prices = ensure_1d_series(prices, "prices_for_hybrid")
+    spy_prices = ensure_1d_series(spy_prices, "spy_for_hybrid")
+    vix_series = ensure_1d_series(vix_series, "vix_for_hybrid")
+
+    state_df = _build_state_features(prices, spy_prices, vix_series)
+    if state_df.empty or len(state_df) < 80:
+        return None, None
+
+    fut_df = _compute_future_returns(prices)
+
+    # 상태 DF와 미래 수익률 DF를 합침 (공통 인덱스 & NaN 제거)
+    merged = state_df.join(
+        fut_df[["ret_1d", "ret_5d", "ret_20d"]], how="inner"
+    ).dropna(subset=["ret_1d", "ret_5d", "ret_20d"])
+
+    if merged.empty or len(merged) < 80:
+        return None, None
+
+    # 오늘 상태 (가장 마지막 일자) - state_df 기준
+    today_state = state_df.iloc[-1]
+
+    # 유사 상태 탐색 (미래 수익률 있는 구간 내에서만)
+    similar_states = _find_similar_states(merged, today_state, min_samples=min_samples)
+    if similar_states.empty:
+        return None, today_state
+
+    probs = _compute_probability_from_df(similar_states)
+
+    return probs, today_state
+
