@@ -7,6 +7,12 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
+import matplotlib
+matplotlib.rcParams['font.family'] = 'Gulim'
+matplotlib.rcParams['axes.unicode_minus'] = False
+matplotlib.font_manager._rebuild()
+
+
 from core import (
     run_grid_rebal_backtest,
     compute_signal_stats,
@@ -19,8 +25,8 @@ from core import (
     analyze_premarket_vs_regular,  # 🔹 새로 추가
 )
 
-# ---------- 한글 폰트 설정 (Windows: Malgun Gothic) ---------- #
-matplotlib.rcParams["font.family"] = "Malgun Gothic"
+# ---------- 한글 폰트 설정 (Windows: Gulim) ---------- #
+matplotlib.rcParams["font.family"] = "Gulim"
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 
@@ -1052,6 +1058,6 @@ with tab_ext:
 
                         st.info(
                             "※ 이 탭은 어디까지나 '통계적 경향'을 보여주는 용도고, "
-                            "단기 예측을 과신하면 그대로 손실 러시 난다. "
+                            "단기 예측을 과신하면 안 됨. "
                             "프리장 방향과 강도, 본장 실제 방향이 어떻게 엮이는지 '감각 보정'용으로 쓰면 됨."
                         )
