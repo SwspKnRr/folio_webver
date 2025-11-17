@@ -40,7 +40,7 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 
 
 # ---------- Streamlit 기본 설정 ---------- #
-st.set_page_config(page_title="특수 리밸 백테스트 웹앱", layout="wide")
+st.set_page_config(page_title="리밸런싱 백테스트 / 예측 웹앱", layout="wide")
 
 st.title("📈 오늘 살까요 팔까요")
 
